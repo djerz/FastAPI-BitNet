@@ -38,14 +38,14 @@ conda create -n bitnet python=3.11
 conda activate bitnet
 ```
 
-Install the Huggingface-CLI tool to download the models:
+Install the Huggingface tool to download the models:
 ```
-pip install -U "huggingface_hub[cli]"
+conda install huggingface_hub
 ```
  
 Download Microsoft's official BitNet model:
 ```
-huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir app/models/BitNet-b1.58-2B-4T
+hf download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir app/models/BitNet-b1.58-2B-4T
 ```
 
 ---

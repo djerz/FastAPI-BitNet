@@ -1,11 +1,16 @@
-FROM python:3.10
+FROM python:3.11
 
 WORKDIR /code
 
 COPY ./app /code
+# A very small FastAPI “shim” that exposes /v1/chat/completions and forwards to BitNet /completion
+COPY main.py /code/main.py
+# Script that starts BitNet server and uvicorn
+COPY entrypoint.sh /code/entrypoint.sh
+RUN chmod +x /code/entrypoint.sh
 
 # Clone BitNet with submodules directly into /code (ensures all files and submodules are present)
-RUN git clone --recursive https://github.com/microsoft/BitNet.git /tmp/BitNet && \
+RUN git clone --recursive https://github.com/djerz/BitNet.git /tmp/BitNet && \
     cp -r /tmp/BitNet/* /code && \
     rm -rf /tmp/BitNet
 
@@ -13,7 +18,6 @@ RUN git clone --recursive https://github.com/microsoft/BitNet.git /tmp/BitNet &&
 RUN apt-get update && apt-get install -y \
     wget \
     lsb-release \
-    software-properties-common \
     gnupg \
     cmake \
     clang \
@@ -25,9 +29,12 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt && \
     pip install "fastapi[standard]" "uvicorn[standard]" httpx fastapi-mcp psutil
 
-# (Optional) Run your setup_env.py if needed
-RUN python /code/setup_env.py -md /code/models/BitNet-b1.58-2B-4T -q i2_s
+# model downloaded with
+#  hf download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir app/models/BitNet-b1.58-2B-4T
+ENV BN_MODEL="BitNet-b1.58-2B-4T"
+ENV BN_MODEL_GGUF="ggml-model-i2_s.gguf"
+# Run your setup_env.py if needed
+RUN python /code/setup_env.py -md /code/models/$BN_MODEL -q i2_s
 
 EXPOSE 8080
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["/code/entrypoint.sh"]
