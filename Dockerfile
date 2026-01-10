@@ -3,8 +3,6 @@ FROM python:3.11
 WORKDIR /code
 
 COPY ./app /code
-# A very small FastAPI “shim” that exposes /v1/chat/completions and forwards to BitNet /completion
-COPY main.py /code/main.py
 # Script that starts BitNet server and uvicorn
 COPY entrypoint.sh /code/entrypoint.sh
 RUN chmod +x /code/entrypoint.sh

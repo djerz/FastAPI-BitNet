@@ -1,8 +1,9 @@
 import psutil
 import os
 import logging
+import httpx
 
-from fastapi import FastAPI, Query, HTTPException, Body, status, Path
+from fastapi import FastAPI, Query, HTTPException, Body, status, Path, Request
 from fastapi_mcp import FastApiMCP
 from lib.endpoints.server_endpoints import SingleServerInitRequest
 
@@ -75,6 +76,69 @@ app = FastAPI(
         "url": "https://opensource.org/licenses/MIT", # Link to license
     },
 )
+
+# --- OpenAI-compatible endpoints for editor/plugins (CopilotChat.nvim etc.) ---
+# This proxies to the local llama/bitnet server (run_inference_server.py).
+BITNET_COMPLETION_URL = os.getenv("BITNET_COMPLETION_URL", "http://127.0.0.1:5000/completion")
+
+def messages_to_prompt(messages):
+    parts = []
+    for m in messages or []:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        parts.append(f"{role}: {content}")
+    return "\n".join(parts) + "\nassistant: "
+
+@app.get("/v1/models", tags=["OpenAI Compatibility"])
+async def openai_models():
+    # Keep it simple; CopilotChat just needs an id list
+    return {
+        "object": "list",
+        "data": [
+            {"id": "bitnet", "object": "model"},
+        ],
+    }
+
+@app.post("/v1/chat/completions", tags=["OpenAI Compatibility"])
+async def openai_chat_completions(req: Request):
+    body = await req.json()
+    prompt = messages_to_prompt(body.get("messages", []))
+
+    # CopilotChat sends max_tokens sometimes; default to something small
+    max_tokens = int(body.get("max_tokens", 128))
+    temperature = float(body.get("temperature", 0.2))
+
+    # IMPORTANT: limit generation or it may default to ~4096 and look like it "hangs"
+    upstream_payload = {
+        "prompt": prompt,
+        "n_predict": max_tokens,
+        "temperature": temperature,
+        "stop": ["<|eot_id|>", "<|end_of_text|>"],
+    }
+
+    async with httpx.AsyncClient(timeout=600) as client:
+        r = await client.post(BITNET_COMPLETION_URL, json=upstream_payload)
+        r.raise_for_status()
+        upstream = r.json()
+
+    # Support common llama-server response shapes
+    text = (
+        upstream.get("content")
+        or upstream.get("text")
+        or upstream.get("completion")
+        or upstream.get("output")
+        or ""
+    )
+
+    return {
+        "id": "chatcmpl-local",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": "stop",
+        }],
+    }
 
 @app.get(
     "/estimate",
