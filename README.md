@@ -67,6 +67,32 @@ This is the easiest and recommended way to run the application.
     docker run -d --name ai_container -p 8080:8080 fastapi_bitnet
     ```
 
+    To change number of threads used by BitNet, add the `BITNET_THREADS` environment variable:
+    ```bash
+    docker run -d --name ai_container -p 8080:8080 -e BITNET_THREADS=12 fastapi_bitnet
+    ```
+
+    To check if the servers are running within the container:
+    ```bash
+    docker exec -it ai_container sh -lc 'ps aux | grep -E "uvicorn|python" | grep -v grep'
+    ```
+
+    To check the logs of the running container:
+    ```bash
+    docker logs -f ai_container
+    ```
+
+    You can also run the test suite:
+    ```bash
+    ./test_bitnet_api.sh
+    ```
+3.  **Stop the Docker container:**
+    ```bash    
+    docker stop ai_container
+    docker rm ai_container
+    ```
+
+
 ### Local Development
 
 For development, you can run the application directly with Uvicorn, which enables auto-reloading.
@@ -109,3 +135,12 @@ For a more integrated experience, check out the companion VS Code extension:
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Todo
+
+### streaming responses from llama-server
+TTFB ~= total time in your timings
+
+Your script shows ttfb_s almost equal to total_s for small requests, which usually means you are not streaming (that’s fine), but it also means you aren’t seeing partial results earlier. CopilotChat can work without streaming, but if you want “snappier feel”, you can later add OpenAI stream=true support (SSE).
+
+Not necessary right now, just a future upgrade.

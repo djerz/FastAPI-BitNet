@@ -77,6 +77,10 @@ app = FastAPI(
     },
 )
 
+@app.get("/health", tags=["Health"])
+def health():
+    return {"status": "ok"}
+
 # --- OpenAI-compatible endpoints for editor/plugins (CopilotChat.nvim etc.) ---
 # This proxies to the local llama/bitnet server (run_inference_server.py).
 BITNET_COMPLETION_URL = os.getenv("BITNET_COMPLETION_URL", "http://127.0.0.1:5000/completion")
