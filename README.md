@@ -146,3 +146,11 @@ Your script shows ttfb_s almost equal to total_s for small requests, which usual
 Not necessary right now, just a future upgrade.
 
 ### configuration for copilot.lua and not only copilotchat.lua
+
+### Multiple local models (switch from <leader>cp)
+
+### Auto thread tuning based on CPU
+
+### Context window trimming for large files
+
+### RAG / file-aware chat
