@@ -90,10 +90,28 @@ UPSTREAM_COMPLETIONS_URL = f"{UPSTREAM_BASE}/v1/completions"
 #TODO: read from env? Or fetch /v1/models once at startup and cache it.
 UPSTREAM_MODEL_ID = "/code/models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf"
 
-_NEOVIM_MARKER_RE = re.compile(r"^##neovim://selection\s*$", re.MULTILINE)
+# Matches:
+#   ##neovim://selection
+#   # neovim://selection
+_NEOVIM_SELECTION_RE = re.compile(r"(?im)^\s*(##|#)\s*neovim://selection\s*$")
+# Removes fenced code blocks that include "path=..."
+# Example seen in your log:
+# ```python path=/home/chris/.../Quickfix/Location lists
+# ```
+_FENCED_WITH_PATH_RE = re.compile(r"(?is)```[^\n]*\bpath\s*=\s*.*?\n.*?```")
+# If some "path=..." leaks outside fences, remove those lines too
+_PATH_LINE_RE = re.compile(r"(?im)^\s*\w*\s*path\s*=\s*.*$")
+
 def _clean_user_text(s: str) -> str:
-    s = _NEOVIM_MARKER_RE.sub("", s)
-    # collapse excessive blank lines
+    if not s:
+        return s
+    # Remove neovim selection markers
+    s = _NEOVIM_SELECTION_RE.sub("", s)
+    # Remove CopilotChat context fences that contain path=
+    s = _FENCED_WITH_PATH_RE.sub("", s)
+    # Remove any remaining path= lines
+    s = _PATH_LINE_RE.sub("", s)
+    # Trim trailing/leading whitespace and collapse too many blank lines
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
 
@@ -199,8 +217,10 @@ async def openai_chat_completions(req: Request):
     messages = body.get("messages", [])
 
     prompt = messages_to_prompt(messages)
+    #TODO: remove DEBUG: log exactly what we send to BitNet/llama
+    #logger.info("PROMPT >>>\n%s\n<<< PROMPT", prompt)
 
-    max_tokens = int(body.get("max_tokens", 128))
+    max_tokens = int(body.get("max_tokens", 512))
     temperature = float(body.get("temperature", 0.2))
 
     # Map friendly model name -> upstream model id
@@ -217,12 +237,13 @@ async def openai_chat_completions(req: Request):
         "repeat_last_n": 128,
         # Stop sequences: cut off if it tries to start another turn or repeats labeling
         "stop": [
-            "\nUser:",
-            "\nSystem:",
-            "\nAssistant:",
-            "<|im_sep|>",
-            "<|eot_id|>",
-            "<|end_of_text|>",
+            "\nUser:", "\nSystem:", "\nAssistant:",
+            "neovim://selection",
+            "path=",
+            "Quickfix",
+            "<|im_sep|>", "<|eot_id|>", "<|end_of_text|>",
+            "<end>", "<end of ",
+            "<tool", "<context", "<edit", "<user", "<instructions",
         ],
     }
 
