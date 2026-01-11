@@ -2,6 +2,7 @@ import psutil
 import os
 import logging
 import httpx
+import re
 
 from fastapi import FastAPI, Query, HTTPException, Body, status, Path, Request
 from fastapi_mcp import FastApiMCP
@@ -83,15 +84,91 @@ def health():
 
 # --- OpenAI-compatible endpoints for editor/plugins (CopilotChat.nvim etc.) ---
 # This proxies to the local llama/bitnet server (run_inference_server.py).
-BITNET_COMPLETION_URL = os.getenv("BITNET_COMPLETION_URL", "http://127.0.0.1:5000/completion")
+UPSTREAM_BASE = "http://127.0.0.1:5000"
+UPSTREAM_COMPLETIONS_URL = f"{UPSTREAM_BASE}/v1/completions"
+# The exact upstream model id returned by /v1/models
+#TODO: read from env? Or fetch /v1/models once at startup and cache it.
+UPSTREAM_MODEL_ID = "/code/models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf"
+
+_NEOVIM_MARKER_RE = re.compile(r"^##neovim://selection\s*$", re.MULTILINE)
+def _clean_user_text(s: str) -> str:
+    s = _NEOVIM_MARKER_RE.sub("", s)
+    # collapse excessive blank lines
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 def messages_to_prompt(messages):
-    parts = []
+    system = []
+    convo = []
+
     for m in messages or []:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        parts.append(f"{role}: {content}")
-    return "\n".join(parts) + "\nassistant: "
+        role = (m.get("role") or "user").lower()
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+
+        if role == "system":
+            system.append(content)
+            continue
+
+        if role == "user":
+            content = _clean_user_text(content)
+            if content:
+                convo.append(f"User: {content}")
+            continue
+
+        if role == "assistant":
+            convo.append(f"Assistant: {content}")
+            continue
+
+        content = _clean_user_text(content)
+        if content:
+            convo.append(f"User: {content}")
+
+    # Default system prompt helps quality a lot in editor usage
+    #TODO: add a mode field in the request body or a header so this can be switched from neovim?
+    if not system:
+        #system = ["You are a helpful assistant. Answer concisely and do not use emojis."]
+        #system = ["You are a helpful assistant. Answer concisely."]
+        # For coding + editing
+        #system = [(
+        #    "You are an expert software assistant.\n"
+        #    "Be concise and practical.\n"
+        #    "Prefer bullet points and short steps.\n"
+        #    "When writing code, output only the code block(s) needed.\n"
+        #    "Do not use emojis.\n"
+        #    "If information is missing, make a reasonable assumption and state it briefly.\n"
+        #    "Do not invent APIs or files that were not mentioned."
+        #)]
+        # For fast, low token usage
+        system = [(
+            "You are a coding assistant.\n"
+            "Answer in the fewest words that still solve the task.\n"
+            "No emojis. No filler.\n"
+            "If you provide code, provide only the final code.\n"
+        )]
+        # For debugging
+        #system = [(
+        #    "You are a debugging assistant.\n"
+        #    "Ask no questions unless absolutely necessary.\n"
+        #    "Start with the most likely cause.\n"
+        #    "Give concrete commands to run and what output to look for.\n"
+        #    "Keep explanations short. No emojis.\n"
+        #)]
+        # For safety against hallucinations
+        #system = [(
+        #    "You are a careful assistant.\n"
+        #    "If you are unsure, say so and propose a way to verify.\n"
+        #    "Do not guess file paths, versions, or outputs.\n"
+        #    "Prefer citing what is known from the prompt.\n"
+        #    "No emojis.\n"
+        #)]
+
+
+    prompt = "System:\n" + "\n".join(system).strip() + "\n\n"
+    prompt += "\n".join(convo).strip()
+    prompt += "\n\nAssistant: "
+    return prompt
 
 @app.get("/v1/models", tags=["OpenAI Compatibility"])
 async def openai_models():
@@ -103,29 +180,58 @@ async def openai_models():
         ],
     }
 
+_LINE_TAG_RE = re.compile(r"<line_\d+:\s*\d+>")
+
+def strip_line_tags(s: str) -> str:
+    if not s:
+        return s
+    s = _LINE_TAG_RE.sub("", s)
+    # collapse repeated spaces/tabs
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    # clean trailing spaces per line
+    s = "\n".join(line.rstrip() for line in s.splitlines())
+    return s.strip()
+
+
 @app.post("/v1/chat/completions", tags=["OpenAI Compatibility"])
 async def openai_chat_completions(req: Request):
     body = await req.json()
-    prompt = messages_to_prompt(body.get("messages", []))
+    messages = body.get("messages", [])
 
-    # CopilotChat sends max_tokens sometimes; default to something small
+    prompt = messages_to_prompt(messages)
+
     max_tokens = int(body.get("max_tokens", 128))
     temperature = float(body.get("temperature", 0.2))
 
-    # IMPORTANT: limit generation or it may default to ~4096 and look like it "hangs"
+    # Map friendly model name -> upstream model id
+    public_model = body.get("model", "bitnet")
+    upstream_model = UPSTREAM_MODEL_ID if public_model == "bitnet" else public_model
+
     upstream_payload = {
+        "model": upstream_model,
         "prompt": prompt,
-        "n_predict": max_tokens,
+        "max_tokens": max_tokens,
         "temperature": temperature,
-        "stop": ["<|eot_id|>", "<|end_of_text|>"],
+        # Anti-loop settings (important for completions endpoints)
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 128,
+        # Stop sequences: cut off if it tries to start another turn or repeats labeling
+        "stop": [
+            "\nUser:",
+            "\nSystem:",
+            "\nAssistant:",
+            "<|im_sep|>",
+            "<|eot_id|>",
+            "<|end_of_text|>",
+        ],
     }
 
     async with httpx.AsyncClient(timeout=600) as client:
-        r = await client.post(BITNET_COMPLETION_URL, json=upstream_payload)
+        r = await client.post(UPSTREAM_COMPLETIONS_URL, json=upstream_payload)
         r.raise_for_status()
         upstream = r.json()
 
-    # Support common llama-server response shapes
+    # llama.cpp server you're using returns top-level "content"
     text = (
         upstream.get("content")
         or upstream.get("text")
@@ -133,6 +239,11 @@ async def openai_chat_completions(req: Request):
         or upstream.get("output")
         or ""
     )
+
+    # Ensure valid UTF-8 (avoid broken sequences)
+    text = text.encode("utf-8", "replace").decode("utf-8")
+    # Clean known junk if it appears
+    text = strip_line_tags(text).strip()
 
     return {
         "id": "chatcmpl-local",

@@ -136,7 +136,7 @@ For a more integrated experience, check out the companion VS Code extension:
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-## Todo
+## TODO:
 
 ### streaming responses from llama-server
 TTFB ~= total time in your timings
@@ -144,3 +144,5 @@ TTFB ~= total time in your timings
 Your script shows ttfb_s almost equal to total_s for small requests, which usually means you are not streaming (that’s fine), but it also means you aren’t seeing partial results earlier. CopilotChat can work without streaming, but if you want “snappier feel”, you can later add OpenAI stream=true support (SSE).
 
 Not necessary right now, just a future upgrade.
+
+### configuration for copilot.lua and not only copilotchat.lua
