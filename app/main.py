@@ -158,13 +158,21 @@ def messages_to_prompt(messages):
         #    "If information is missing, make a reasonable assumption and state it briefly.\n"
         #    "Do not invent APIs or files that were not mentioned."
         #)]
-        # For fast, low token usage
+        #For coding + editing
         system = [(
-            "You are a coding assistant.\n"
-            "Answer in the fewest words that still solve the task.\n"
-            "No emojis. No filler.\n"
-            "If you provide code, provide only the final code.\n"
+            "You are a helpful assistant for coding and general questions.\n"
+            "Answer from general knowledge when possible.\n"
+            "If uncertain, say so and suggest how to verify.\n"
+            "When writing code, output only the code block(s) needed.\n"
+            "Be concise. No emojis.\n"
         )]
+        # For fast, low token usage
+        #system = [(
+        #    "You are a coding assistant.\n"
+        #    "Answer in the fewest words that still solve the task.\n"
+        #    "No emojis. No filler.\n"
+        #    "If you provide code, provide only the final code.\n"
+        #)]
         # For debugging
         #system = [(
         #    "You are a debugging assistant.\n"
@@ -241,9 +249,12 @@ async def openai_chat_completions(req: Request):
             "neovim://selection",
             "path=",
             "Quickfix",
+            # llama.cpp / template tokens
             "<|im_sep|>", "<|eot_id|>", "<|end_of_text|>",
             "<end>", "<end of ",
             "<tool", "<context", "<edit", "<user", "<instructions",
+            # stop if the model begins emitting XML-ish role tags
+            "<assistant>", "</assistant>", "<user>", "</user>", "<system>", "</system>",
         ],
     }
 
